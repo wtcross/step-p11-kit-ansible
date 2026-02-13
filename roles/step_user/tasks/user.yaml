@@ -1,0 +1,40 @@
+---
+- name: Create the {{ _step_user }} group
+  become: true
+  ansible.builtin.group:
+    state: present
+    name: "{{ _step_group }}"
+    gid: "{{ _step_gid }}"
+
+- name: Create the {{ _step_user }} user
+  become: true
+  ansible.builtin.user:
+    state: present
+    name: "{{ _step_user }}"
+    system: false
+    create_home: true
+    home: "{{ __step_user_home }}"
+    shell: /sbin/nologin
+    uid: "{{ _step_uid }}"
+    group: "{{ _step_group }}"
+
+- name: Enable lingering for {{ _step_user }} user
+  become: true
+  ansible.builtin.command:
+    cmd: /bin/loginctl enable-linger {{ _step_user }}
+    creates: /var/lib/systemd/linger/{{ _step_user }}
+  register: enable_linger
+  changed_when: enable_linger.start is not none and enable_linger.rc == 0
+  notify: Restart the systemd-logind service
+
+- name: Ensure user scoped systemd config directories exist for {{ _step_user }} user
+  become: true
+  ansible.builtin.file:
+    state: directory
+    path: "{{ __step_user_home }}/{{ item }}"
+    owner: "{{ _step_user }}"
+    group: "{{ _step_group }}"
+    mode: "0750"
+  loop:
+    - .config/containers/systemd
+    - .config/systemd/user

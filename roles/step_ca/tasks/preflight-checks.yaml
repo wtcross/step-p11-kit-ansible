@@ -1,0 +1,121 @@
+---
+- name: Verify required role variables are set
+  when: vars[item] is not defined
+  become: false
+  delegate_to: localhost
+  ansible.builtin.fail:
+    msg: >
+      Missing required variable: {{ item }}
+  loop:
+    - step_ca_name
+    - step_ca_dns_names
+    - step_ca_host_private_key_pkcs11_uri
+    - step_ca_root_cert_local_path
+    - step_ca_intermediate_cert_local_path
+
+- name: Normalize host private key PKCS#11 URI input
+  become: false
+  ansible.builtin.set_fact:
+    __step_ca_host_private_key_pkcs11_uri_normalized: "{{ step_ca_host_private_key_pkcs11_uri | trim }}"
+  changed_when: false
+
+- name: Validate host private key PKCS#11 URI input is not empty
+  when: __step_ca_host_private_key_pkcs11_uri_normalized | length == 0
+  become: false
+  delegate_to: localhost
+  ansible.builtin.fail:
+    msg: >
+      step_ca_host_private_key_pkcs11_uri must not be empty.
+
+- name: Validate host private key PKCS#11 URI prefix
+  when: not (__step_ca_host_private_key_pkcs11_uri_normalized | regex_search('^pkcs11:'))
+  become: false
+  delegate_to: localhost
+  ansible.builtin.fail:
+    msg: >
+      step_ca_host_private_key_pkcs11_uri must start with pkcs11:.
+
+- name: Strip PKCS#11 URI prefix for component parsing
+  become: false
+  ansible.builtin.set_fact:
+    __step_ca_host_private_key_pkcs11_uri_body: "{{ __step_ca_host_private_key_pkcs11_uri_normalized | regex_replace('^pkcs11:', '') }}"
+  changed_when: false
+
+- name: Parse host private key PKCS#11 URI components
+  become: false
+  ansible.builtin.set_fact:
+    __step_ca_host_pkcs11_token: "{{ (__step_ca_host_private_key_pkcs11_uri_body | regex_findall('(?:^|[;?&])token=([^;?&]+)') | first) | default('') }}"
+    __step_ca_host_pkcs11_id: "{{ (__step_ca_host_private_key_pkcs11_uri_body | regex_findall('(?:^|[;?&])id=([^;?&]+)') | first) | default('') }}"
+    __step_ca_host_pkcs11_module_path: "{{ (__step_ca_host_private_key_pkcs11_uri_body | regex_findall('(?:^|[;?&])module-path=([^;?&]+)') | first) | default('') }}"
+    __step_ca_host_pkcs11_object: "{{ (__step_ca_host_private_key_pkcs11_uri_body | regex_findall('(?:^|[;?&])object=([^;?&]+)') | first) | default('') }}"
+    __step_ca_host_pkcs11_type: "{{ (__step_ca_host_private_key_pkcs11_uri_body | regex_findall('(?:^|[;?&])type=([^;?&]+)') | first) | default('') }}"
+  changed_when: false
+
+- name: Collect missing host PKCS#11 URI components
+  become: false
+  ansible.builtin.set_fact:
+    __step_ca_missing_host_private_key_pkcs11_uri_components: >-
+      {{
+        []
+        + (['module-path'] if __step_ca_host_pkcs11_module_path | length == 0 else [])
+        + (['token'] if __step_ca_host_pkcs11_token | length == 0 else [])
+        + (['id'] if __step_ca_host_pkcs11_id | length == 0 else [])
+      }}
+  changed_when: false
+
+- name: Validate required host PKCS#11 URI components
+  when: __step_ca_missing_host_private_key_pkcs11_uri_components | length > 0
+  become: false
+  delegate_to: localhost
+  ansible.builtin.fail:
+    msg: >-
+      step_ca_host_private_key_pkcs11_uri is missing required component(s):
+      {{ __step_ca_missing_host_private_key_pkcs11_uri_components | join(', ') }}.
+      Required components: module-path, token, id.
+
+- name: Derive role-managed PKCS#11 URIs from host private key URI
+  become: false
+  ansible.builtin.set_fact:
+    __step_ca_hsm_pkcs11_uri_derived: >-
+      pkcs11:token={{ __step_ca_host_pkcs11_token }}?module-path={{ __step_ca_host_pkcs11_module_path }}
+    __step_ca_private_key_pkcs11_uri_derived: >-
+      pkcs11:token={{ __step_ca_host_pkcs11_token }};id={{ __step_ca_host_pkcs11_id }}{% if __step_ca_host_pkcs11_object | length > 0 %};object={{ __step_ca_host_pkcs11_object }}{% endif %}{% if __step_ca_host_pkcs11_type | length > 0 %};type={{ __step_ca_host_pkcs11_type }}{% endif %}?module-path={{ __step_ca_container_pkcs11_module_path }}&pin-source=file:///run/secrets/hsm-pin
+    __step_ca_kms_pkcs11_uri_derived: >-
+      pkcs11:token={{ __step_ca_host_pkcs11_token }}?module-path={{ __step_ca_container_pkcs11_module_path }}&pin-source=file:///run/secrets/hsm-pin
+  changed_when: false
+
+- name: Validate derived instance name
+  when: _step_instance | length == 0
+  become: false
+  delegate_to: localhost
+  ansible.builtin.fail:
+    msg: >
+      The derived instance name is empty. Set step_ca_instance explicitly.
+
+- name: Validate DNS names input
+  when: _step_ca_dns_names_csv | trim | length == 0
+  become: false
+  delegate_to: localhost
+  ansible.builtin.fail:
+    msg: >
+      step_ca_dns_names must contain at least one DNS name.
+
+- name: Verify certificate source files exist on the Ansible controller
+  become: false
+  delegate_to: localhost
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  register: step_ca_local_cert_stats
+  loop:
+    - name: root cert
+      path: "{{ step_ca_root_cert_local_path }}"
+    - name: intermediate cert
+      path: "{{ step_ca_intermediate_cert_local_path }}"
+
+- name: Fail when a required certificate source file does not exist
+  when: not item.stat.exists
+  become: false
+  delegate_to: localhost
+  ansible.builtin.fail:
+    msg: "Required {{ item.item.name }} file not found on Ansible controller: {{ item.item.path }}"
+  loop: "{{ step_ca_local_cert_stats.results }}"

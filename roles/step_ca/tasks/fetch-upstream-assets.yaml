@@ -1,0 +1,115 @@
+---
+- name: Define upstream asset list
+  become: false
+  ansible.builtin.set_fact:
+    __step_ca_upstream_assets:
+      - remote_path: deploy/systemd/step-ca-p11-kit@.container
+        local_path: "{{ __step_ca_upstream_cache_dir }}/deploy/systemd/step-ca-p11-kit@.container"
+        dest_path: "{{ __step_user_home }}/.config/containers/systemd/step-ca-p11-kit@.container"
+        mode: "0644"
+      - remote_path: deploy/systemd/step-ca-p11-kit@.volume
+        local_path: "{{ __step_ca_upstream_cache_dir }}/deploy/systemd/step-ca-p11-kit@.volume"
+        dest_path: "{{ __step_user_home }}/.config/containers/systemd/step-ca-p11-kit@.volume"
+        mode: "0644"
+      - remote_path: deploy/systemd/step-ca-p11-kit.network
+        local_path: "{{ __step_ca_upstream_cache_dir }}/deploy/systemd/step-ca-p11-kit.network"
+        dest_path: "{{ __step_user_home }}/.config/containers/systemd/step-ca-p11-kit.network"
+        mode: "0644"
+      - remote_path: deploy/systemd/step-ca-p11-kit@.target
+        local_path: "{{ __step_ca_upstream_cache_dir }}/deploy/systemd/step-ca-p11-kit@.target"
+        dest_path: "{{ __step_user_home }}/.config/systemd/user/step-ca-p11-kit@.target"
+        mode: "0644"
+      - remote_path: deploy/systemd/p11-kit-server@.service
+        local_path: "{{ __step_ca_upstream_cache_dir }}/deploy/systemd/p11-kit-server@.service"
+        dest_path: "{{ __step_user_home }}/.config/systemd/user/p11-kit-server@.service"
+        mode: "0644"
+      - remote_path: deploy/systemd/p11-kit-server@.socket
+        local_path: "{{ __step_ca_upstream_cache_dir }}/deploy/systemd/p11-kit-server@.socket"
+        dest_path: "{{ __step_user_home }}/.config/systemd/user/p11-kit-server@.socket"
+        mode: "0644"
+      - remote_path: deploy/systemd/p11-kit-server@.target
+        local_path: "{{ __step_ca_upstream_cache_dir }}/deploy/systemd/p11-kit-server@.target"
+        dest_path: "{{ __step_user_home }}/.config/systemd/user/p11-kit-server@.target"
+        mode: "0644"
+      - remote_path: scripts/generate-instance-env.sh
+        local_path: "{{ __step_ca_upstream_cache_dir }}/scripts/generate-instance-env.sh"
+        dest_path: "{{ __step_ca_upstream_scripts_dir }}/generate-instance-env.sh"
+        mode: "0755"
+      - remote_path: scripts/common/validation.sh
+        local_path: "{{ __step_ca_upstream_cache_dir }}/scripts/common/validation.sh"
+        dest_path: "{{ __step_ca_upstream_scripts_dir }}/common/validation.sh"
+        mode: "0644"
+      - remote_path: scripts/common/logging.sh
+        local_path: "{{ __step_ca_upstream_cache_dir }}/scripts/common/logging.sh"
+        dest_path: "{{ __step_ca_upstream_scripts_dir }}/common/logging.sh"
+        mode: "0644"
+  changed_when: false
+
+- name: Compute controller cache ownership values
+  become: false
+  delegate_to: localhost
+  ansible.builtin.set_fact:
+    __step_ca_controller_owner: "{{ lookup('env', 'USER') }}"
+    __step_ca_controller_group: "{{ lookup('pipe', 'id -gn') }}"
+  changed_when: false
+
+- name: Ensure controller cache directory exists
+  become: false
+  delegate_to: localhost
+  ansible.builtin.file:
+    state: directory
+    path: "{{ __step_ca_upstream_cache_dir }}"
+    owner: "{{ __step_ca_controller_owner }}"
+    group: "{{ __step_ca_controller_group }}"
+    mode: "0700"
+
+- name: Ensure controller cache subdirectories exist
+  become: false
+  delegate_to: localhost
+  ansible.builtin.file:
+    state: directory
+    path: "{{ item }}"
+    owner: "{{ __step_ca_controller_owner }}"
+    group: "{{ __step_ca_controller_group }}"
+    mode: "0700"
+  loop: "{{ __step_ca_upstream_assets | map(attribute='local_path') | map('dirname') | unique | list }}"
+
+- name: Download upstream assets from step-ca-p11-kit-images
+  become: false
+  delegate_to: localhost
+  ansible.builtin.get_url:
+    url: "{{ __step_ca_upstream_base_url }}/{{ item.remote_path | ansible.builtin.urlencode }}"
+    dest: "{{ item.local_path }}"
+    owner: "{{ __step_ca_controller_owner }}"
+    group: "{{ __step_ca_controller_group }}"
+    mode: "0644"
+    force: true
+  loop: "{{ __step_ca_upstream_assets }}"
+
+- name: Ensure destination directories exist
+  become: true
+  ansible.builtin.file:
+    state: directory
+    path: "{{ item }}"
+    owner: "{{ _step_user }}"
+    group: "{{ _step_group }}"
+    mode: "0755"
+  loop:
+    - "{{ __step_user_home }}/.config/containers/systemd"
+    - "{{ __step_user_home }}/.config/systemd/user"
+    - "{{ __step_ca_upstream_scripts_dir }}"
+    - "{{ __step_ca_upstream_scripts_dir }}/common"
+
+- name: Copy upstream assets to target user configuration
+  become: true
+  ansible.builtin.copy:
+    src: "{{ item.local_path }}"
+    dest: "{{ item.dest_path }}"
+    owner: "{{ _step_user }}"
+    group: "{{ _step_group }}"
+    mode: "{{ item.mode }}"
+  loop: "{{ __step_ca_upstream_assets }}"
+  notify:
+    - Reload the user-level systemd daemon
+    - Restart the p11-kit-server target
+    - Restart step-ca quadlet service

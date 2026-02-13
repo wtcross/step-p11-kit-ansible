@@ -1,0 +1,9 @@
+---
+- name: Include preflight checks
+  ansible.builtin.include_tasks: preflight-checks.yaml
+
+- name: Include user setup tasks
+  ansible.builtin.include_tasks: user.yaml
+
+- name: Include HSM access tasks
+  ansible.builtin.include_tasks: hsm.yaml

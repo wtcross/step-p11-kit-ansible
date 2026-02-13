@@ -1,0 +1,27 @@
+---
+- name: Update OS packages
+  when: step_host_update_packages | bool
+  become: true
+  ansible.builtin.dnf:
+    state: latest
+    pkg: "*"
+    update_cache: true
+    use_backend: dnf4
+
+- name: Install step-ca OS packages
+  become: true
+  ansible.builtin.dnf:
+    state: latest
+    pkg: "{{ step_host_os_packages }}"
+    update_cache: false
+    use_backend: dnf4
+
+- name: Check if reboot is required
+  when: step_host_reboot_if_required | bool
+  become: true
+  ansible.builtin.command:
+    cmd: needs-restarting -r
+  register: needs_restarting_result
+  changed_when: needs_restarting_result.rc == 1
+  failed_when: false
+  notify: Reboot the system

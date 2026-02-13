@@ -1,0 +1,41 @@
+---
+_step_uid: "{{ step_uid | default('1001') }}"
+_step_gid: "{{ step_gid | default('1001') }}"
+_step_user: "{{ step_user | default('step') }}"
+_step_group: "{{ step_group | default('step') }}"
+
+_step_https_port: "{{ (step_ca_https_port | default(9000)) | string }}"
+_step_ca_admin_subject: "{{ step_ca_admin_subject | default('step') }}"
+_step_ca_admin_provisioner_name: "{{ step_ca_admin_provisioner_name | default('admin') }}"
+_step_ca_steppath: "{{ step_ca_steppath | default('/home/step/.step') }}"
+
+# Instance name - derived from step_ca_name if not explicitly set
+# Sanitized to be safe for systemd unit names (lowercase, alphanumeric + hyphens)
+_step_instance: "{{ step_ca_instance | default(step_ca_name | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('^-|-$', '')) }}"
+
+# Pull latest systemd/script assets from step-ca-p11-kit-images
+step_ca_images_repo_owner: wtcross
+step_ca_images_repo_name: step-p11-kit-images
+step_ca_images_repo_ref: main
+
+# Rotate cert secrets when source cert content changes
+step_ca_rotate_cert_secrets: true
+
+# Force prompting even if secret already exists
+step_ca_force_prompt_hsm_pin: false
+step_ca_force_prompt_admin_password: false
+
+# Derived helper values
+_step_ca_dns_names_csv: >-
+  {% if step_ca_dns_names is string %}
+  {{ step_ca_dns_names }}
+  {% else %}
+  {{ step_ca_dns_names | map('trim') | reject('equalto', '') | join(',') }}
+  {% endif %}
+
+__step_user_home: /home/{{ _step_user }}
+__step_ca_upstream_base_url: "https://raw.githubusercontent.com/{{ step_ca_images_repo_owner }}/{{ step_ca_images_repo_name }}/refs/heads/{{ step_ca_images_repo_ref }}"
+__step_ca_upstream_cache_dir: "/tmp/step-ca-p11-kit-images-{{ _step_instance }}"
+__step_ca_upstream_scripts_dir: "{{ __step_user_home }}/.local/share/step-ca-p11-kit-images/scripts"
+__step_ca_secret_state_dir: "{{ __step_user_home }}/.local/state/step-ca-p11-kit-secrets"
+__step_ca_container_pkcs11_module_path: /usr/lib/x86_64-linux-gnu/pkcs11/p11-kit-client.so
