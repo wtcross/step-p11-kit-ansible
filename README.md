@@ -58,6 +58,30 @@ ansible-galaxy collection build step-ansible/
 ansible-galaxy collection install ./wtcross-step-*.tar.gz
 ```
 
+## Example Playbook
+
+Below is an Ansible playbook using the roles from this repo to deploy step-ca:
+
+```
+- name: Configure Step CA host
+  hosts: ca
+  gather_facts: true
+  roles:
+    - role: wtcross.step.step_host
+
+- name: Configure Step CA user
+  hosts: ca
+  gather_facts: true
+  roles:
+    - role: wtcross.step.step_user
+
+- name: Configure Step CA
+  hosts: ca
+  gather_facts: true
+  roles:
+    - role: wtcross.step.step_ca
+```
+
 ## License
 
 MIT-0
