@@ -4,7 +4,6 @@ Deploys `step-ca-p11-kit` as a rootless, user-scoped systemd quadlet with PKCS#1
 
 ## Requirements
 
-- RHEL 10.1 or later
 - `wtcross.step.step_user` should be applied first
 - User configured as `ansible_user` must be able to become `root`
 - Controller running the playbook must be able to reach GitHub raw content

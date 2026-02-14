@@ -4,7 +4,6 @@ Prepares the host OS with required packages for step-ca deployment.
 
 ## Requirements
 
-- RHEL 10.1 or later
 - User configured as `ansible_user` must be able to become `root`
 
 ## Role Variables

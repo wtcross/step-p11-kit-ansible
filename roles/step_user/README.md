@@ -4,7 +4,6 @@ Creates a dedicated user and configures HSM access for step-ca deployment.
 
 ## Requirements
 
-- RHEL 10.1 or later
 - Requires `wtcross.step.step_host` to be run first
 - User configured as `ansible_user` must be able to become `root`
 
@@ -19,6 +18,8 @@ Creates a dedicated user and configures HSM access for step-ca deployment.
 | `step_hsm_serial` | yes | Serial of the token (ID_SERIAL_SHORT) | |
 | `step_hsm_vendor_id` | yes | idVendor attribute of the HSM | |
 | `step_hsm_product_id` | yes | idProduct attribute of the HSM | |
+
+*Note*: The `step_hsm_serial` variable need to be the value of `ID_SERIAL_SHORT` as udev reports it. Sometimes serial numbers for certain devices have trailing zeros in udev.
 
 ## HSM Access
 

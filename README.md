@@ -1,17 +1,16 @@
 # Ansible Collection - wtcross.step
 
-Ansible collection for deploying `step-ca-p11-kit` with PKCS#11/HSM support on RHEL.
+Ansible collection for deploying `step-ca-p11-kit` with PKCS#11/HSM support.
 
 > [!WARNING]
 > Do not use this collection in production. It is for lab purposes only and no support is offered.
 
 ## Overview
 
-This collection deploys `step-ca` as a rootless, user-scoped systemd quadlet and uses `p11-kit server` for PKCS#11 remoting.
+This collection deploys `step-ca` as a rootless, user-scoped systemd quadlet and uses `p11-kit server` for PKCS#11 remoting. It also sets up udev and polkit rules that give the `step_user` access to a specific HSM.
 
 ## Requirements
 
-- Container host must be on `RHEL 10.1` or later
 - User configured as `ansible_user` must be able to become `root`
 - Controller running the playbook must be able to reach GitHub raw content
 
