@@ -7,7 +7,7 @@ Ansible collection for deploying `step-ca-p11-kit` with PKCS#11/HSM support.
 
 ## Overview
 
-This collection deploys `step-ca` as a rootless, user-scoped systemd quadlet and uses `p11-kit server` for PKCS#11 remoting. It also sets up udev and polkit rules that give the `step_user` access to a specific HSM.
+This collection deploys `step-ca` as a rootless, user-scoped systemd quadlet and uses `p11-kit server` for PKCS#11 remoting. It also sets up udev and polkit rules that give the `step_user` access to a specific HSM. The Ansible content in this role tries to use a very explict style so that it's hard to mess up how the host system is configured for running `step-ca`.
 
 ## Requirements
 
@@ -54,7 +54,7 @@ ansible-galaxy collection install wtcross.step
 Or install from source:
 
 ```bash
-ansible-galaxy collection build step-ansible/
+ansible-galaxy collection build step-p11-kit-ansible/
 ansible-galaxy collection install ./wtcross-step-*.tar.gz
 ```
 
@@ -71,13 +71,11 @@ Below is an Ansible playbook using the roles from this repo to deploy step-ca:
 
 - name: Configure Step CA user
   hosts: ca
-  gather_facts: true
   roles:
     - role: wtcross.step.step_user
 
 - name: Configure Step CA
   hosts: ca
-  gather_facts: true
   roles:
     - role: wtcross.step.step_ca
 ```
