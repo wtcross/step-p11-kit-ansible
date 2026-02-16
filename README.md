@@ -9,6 +9,35 @@ Ansible collection for deploying `step-ca-p11-kit` with PKCS#11/HSM support.
 
 This collection deploys `step-ca` as a rootless, user-scoped systemd quadlet and uses `p11-kit server` for PKCS#11 remoting. It also sets up udev and polkit rules that give the `step_user` access to a specific HSM. The Ansible content in this role tries to use a very explict style so that it's hard to mess up how the host system is configured for running `step-ca`.
 
+The following diagram will give you a general idea of what this project sets up:
+
+```text
++-----------------------------------------------------------------------------------------+
+|                                    Host OS                                              |
+|                                                                                         |
+|                                       PKCS#11                                           |
+|  +-------------------------+   some-pkcs11-module.so   +-----------------------------+  |
+|  |          Token          | <-----------------------> |       p11-kit server        |  |
+|  +-------------------------+                           |  (exports UNIX domain sock) |  |
+|                                                        +--------------+--------------+  |
+|                                                                   |                     |
+|                                                                   |                     |
+|                                                             pkcs11-socket               |
++-------------------------------------------------------------------|---------------------+
+                                                                    |
+                                                                    |
++-------------------------------------------------------------------|----------------------+
+|                          Container: step-ca-p11-kit               |                      |
+|                                                                   |                      |
+|                                        PKCS#11                    v                      |
+|  +-------------------------+      p11-kit-client.so       +----------------------------+ |
+|  |        step-ca          | <--------------------------> | (mount)                    | |
+|  |    (PKCS#11 client)     |                              | /run/p11-kit/pkcs11-socket | |
+|  +-------------------------+                              +----------------------------+ |
+|                                                                                          |
++------------------------------------------------------------------------------------------+
+```
+
 ## Requirements
 
 - User configured as `ansible_user` must be able to become `root`
