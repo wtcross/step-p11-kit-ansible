@@ -29,6 +29,13 @@ It pulls files from the `step-ca-p11-kit-images` repository using a pinned defau
 | `step_ca_root_cert_local_path` | Path on the Ansible controller for the root cert PEM |
 | `step_ca_intermediate_cert_local_path` | Path on the Ansible controller for the intermediate cert PEM |
 
+Preflight validation enforces all of the following:
+
+- `step_ca_root_cert_local_path` contains exactly one self-signed CA root certificate.
+- `step_ca_intermediate_cert_local_path` contains a PEM bundle that chains to `step_ca_root_cert_local_path`.
+- `step_ca_intermediate_cert_local_path` does not include the root certificate from `step_ca_root_cert_local_path`.
+- Every value in `step_ca_dns_names` is present as a DNS SAN entry in the intermediate certificate bundle.
+
 The role parses `step_ca_host_private_key_pkcs11_uri` and derives all PKCS#11 URIs needed for:
 
 - host-side `p11-kit server` token remoting
