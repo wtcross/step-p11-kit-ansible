@@ -38,4 +38,6 @@ __step_ca_upstream_base_url: "https://raw.githubusercontent.com/{{ step_ca_image
 __step_ca_upstream_cache_dir: "/tmp/step-ca-p11-kit-images-{{ _step_instance }}"
 __step_ca_upstream_scripts_dir: "{{ __step_user_home }}/.local/share/step-ca-p11-kit-images/scripts"
 __step_ca_secret_state_dir: "{{ __step_user_home }}/.local/state/step-ca-p11-kit-secrets"
+# Default container listener port for new instances; existing instances may retain persisted address.
+__step_ca_container_https_port: "9000"
 __step_ca_container_pkcs11_module_path: /usr/lib/x86_64-linux-gnu/pkcs11/p11-kit-client.so

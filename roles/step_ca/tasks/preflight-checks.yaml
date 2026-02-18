@@ -13,6 +13,31 @@
     - step_ca_root_cert_local_path
     - step_ca_intermediate_cert_local_path
 
+- name: Check if cosign is installed on target host
+  become: false
+  ansible.builtin.command:
+    argv:
+      - cosign
+      - version
+  register: __step_ca_cosign_version_check
+  failed_when: false
+  changed_when: false
+
+- name: Check if cosign is executable at default install path
+  become: false
+  ansible.builtin.stat:
+    path: /usr/local/bin/cosign
+  register: __step_ca_cosign_default_path_stat
+  changed_when: false
+
+- name: Fail when cosign is not installed on target host
+  when: __step_ca_cosign_version_check.rc != 0 and not (__step_ca_cosign_default_path_stat.stat.executable | default(false))
+  become: false
+  ansible.builtin.fail:
+    msg: >-
+      cosign is required for the step_ca role but was not found on the target host.
+      Apply the wtcross.step.step_host role before running step_ca.
+
 - name: Normalize host private key PKCS#11 URI input
   become: false
   ansible.builtin.set_fact:
@@ -120,292 +145,6 @@
     msg: "Required {{ item.item.name }} file not found on Ansible controller: {{ item.item.path }}"
   loop: "{{ step_ca_local_cert_stats.results }}"
 
-- name: Read root certificate file content
-  become: false
-  delegate_to: localhost
-  ansible.builtin.slurp:
-    src: "{{ step_ca_root_cert_local_path }}"
-  register: __step_ca_root_cert_file_content
-
-- name: Extract PEM certificates from root certificate file
-  become: false
-  ansible.builtin.set_fact:
-    __step_ca_root_cert_pem_blocks: >-
-      {{
-        __step_ca_root_cert_file_content.content
-        | b64decode
-        | regex_findall('-----BEGIN CERTIFICATE-----[\\s\\S]*?-----END CERTIFICATE-----')
-      }}
-  changed_when: false
-
-- name: Fail when root certificate file does not contain exactly one PEM certificate
-  when: __step_ca_root_cert_pem_blocks | length != 1
-  become: false
-  delegate_to: localhost
-  ansible.builtin.fail:
-    msg: >-
-      step_ca_root_cert_local_path ({{ step_ca_root_cert_local_path }}) must contain
-      exactly one PEM certificate. Found {{ __step_ca_root_cert_pem_blocks | length }}.
-      Provide only the root CA certificate in this file.
-
-- name: Read root certificate subject and issuer
-  become: false
-  delegate_to: localhost
-  ansible.builtin.command:
-    argv:
-      - openssl
-      - x509
-      - -in
-      - "{{ step_ca_root_cert_local_path }}"
-      - -noout
-      - -subject
-      - -issuer
-  register: __step_ca_root_cert_subject_and_issuer
-  failed_when: false
-  changed_when: false
-
-- name: Fail when root certificate cannot be parsed
-  when: __step_ca_root_cert_subject_and_issuer.rc != 0
-  become: false
-  delegate_to: localhost
-  ansible.builtin.fail:
-    msg: >-
-      Failed to parse step_ca_root_cert_local_path ({{ step_ca_root_cert_local_path }})
-      as an X.509 PEM certificate.
-      stderr: {{ __step_ca_root_cert_subject_and_issuer.stderr | default('') | trim }}
-
-- name: Read root certificate text for CA validation
-  become: false
-  delegate_to: localhost
-  ansible.builtin.command:
-    argv:
-      - openssl
-      - x509
-      - -in
-      - "{{ step_ca_root_cert_local_path }}"
-      - -noout
-      - -text
-  register: __step_ca_root_cert_text
-  failed_when: false
-  changed_when: false
-
-- name: Fail when root certificate text cannot be read
-  when: __step_ca_root_cert_text.rc != 0
-  become: false
-  delegate_to: localhost
-  ansible.builtin.fail:
-    msg: >-
-      Failed to inspect step_ca_root_cert_local_path ({{ step_ca_root_cert_local_path }})
-      for CA extensions.
-      stderr: {{ __step_ca_root_cert_text.stderr | default('') | trim }}
-
-- name: Fail when root certificate is not a CA certificate
-  when: not (__step_ca_root_cert_text.stdout | regex_search('CA:TRUE'))
-  become: false
-  delegate_to: localhost
-  ansible.builtin.fail:
-    msg: >-
-      step_ca_root_cert_local_path ({{ step_ca_root_cert_local_path }}) is not a CA
-      certificate. The certificate must include Basic Constraints with CA:TRUE.
-
-- name: Normalize root certificate subject and issuer
-  become: false
-  ansible.builtin.set_fact:
-    __step_ca_root_cert_subject_normalized: >-
-      {{
-        (__step_ca_root_cert_subject_and_issuer.stdout
-        | regex_findall('subject\\s*=\\s*(.+)')
-        | first)
-        | default('')
-        | trim
-      }}
-    __step_ca_root_cert_issuer_normalized: >-
-      {{
-        (__step_ca_root_cert_subject_and_issuer.stdout
-        | regex_findall('issuer\\s*=\\s*(.+)')
-        | first)
-        | default('')
-        | trim
-      }}
-  changed_when: false
-
-- name: Fail when root certificate is not self-signed
-  when: __step_ca_root_cert_subject_normalized != __step_ca_root_cert_issuer_normalized
-  become: false
-  delegate_to: localhost
-  ansible.builtin.fail:
-    msg: >-
-      step_ca_root_cert_local_path ({{ step_ca_root_cert_local_path }}) is not a
-      self-signed root certificate.
-      Subject: {{ __step_ca_root_cert_subject_normalized }}
-      Issuer: {{ __step_ca_root_cert_issuer_normalized }}
-
-- name: Read root certificate SHA256 fingerprint
-  become: false
-  delegate_to: localhost
-  ansible.builtin.command:
-    argv:
-      - openssl
-      - x509
-      - -in
-      - "{{ step_ca_root_cert_local_path }}"
-      - -noout
-      - -fingerprint
-      - -sha256
-  register: __step_ca_root_cert_fingerprint_cmd
-  failed_when: false
-  changed_when: false
-
-- name: Fail when root certificate fingerprint cannot be read
-  when: __step_ca_root_cert_fingerprint_cmd.rc != 0
-  become: false
-  delegate_to: localhost
-  ansible.builtin.fail:
-    msg: >-
-      Failed to read fingerprint from step_ca_root_cert_local_path
-      ({{ step_ca_root_cert_local_path }}).
-      stderr: {{ __step_ca_root_cert_fingerprint_cmd.stderr | default('') | trim }}
-
-- name: Normalize root certificate SHA256 fingerprint
-  become: false
-  ansible.builtin.set_fact:
-    __step_ca_root_cert_fingerprint_normalized: >-
-      {{
-        (__step_ca_root_cert_fingerprint_cmd.stdout
-        | regex_findall('Fingerprint=(.+)')
-        | first)
-        | default('')
-        | regex_replace(':', '')
-        | trim
-        | upper
-      }}
-  changed_when: false
-
-- name: Fail when root certificate fingerprint is empty
-  when: __step_ca_root_cert_fingerprint_normalized | length == 0
-  become: false
-  delegate_to: localhost
-  ansible.builtin.fail:
-    msg: >-
-      Could not parse a SHA256 fingerprint from step_ca_root_cert_local_path
-      ({{ step_ca_root_cert_local_path }}).
-
-- name: Read intermediate certificate file content
-  become: false
-  delegate_to: localhost
-  ansible.builtin.slurp:
-    src: "{{ step_ca_intermediate_cert_local_path }}"
-  register: __step_ca_intermediate_cert_file_content
-
-- name: Extract PEM certificates from intermediate certificate bundle
-  become: false
-  ansible.builtin.set_fact:
-    __step_ca_intermediate_cert_pem_blocks: >-
-      {{
-        __step_ca_intermediate_cert_file_content.content
-        | b64decode
-        | regex_findall('-----BEGIN CERTIFICATE-----[\\s\\S]*?-----END CERTIFICATE-----')
-      }}
-  changed_when: false
-
-- name: Fail when intermediate certificate bundle does not contain any PEM certificates
-  when: __step_ca_intermediate_cert_pem_blocks | length == 0
-  become: false
-  delegate_to: localhost
-  ansible.builtin.fail:
-    msg: >-
-      step_ca_intermediate_cert_local_path ({{ step_ca_intermediate_cert_local_path }})
-      must contain at least one PEM certificate to form a chain.
-
-- name: Verify each intermediate bundle certificate chains to the configured root certificate
-  become: false
-  delegate_to: localhost
-  ansible.builtin.command:
-    argv:
-      - openssl
-      - verify
-      - -CAfile
-      - "{{ step_ca_root_cert_local_path }}"
-      - -untrusted
-      - "{{ step_ca_intermediate_cert_local_path }}"
-    stdin: "{{ item }}"
-  register: __step_ca_intermediate_chain_verify_results
-  failed_when: false
-  changed_when: false
-  loop: "{{ __step_ca_intermediate_cert_pem_blocks }}"
-
-- name: Fail when an intermediate bundle certificate does not chain to the configured root certificate
-  when: item.rc != 0
-  become: false
-  delegate_to: localhost
-  ansible.builtin.fail:
-    msg: >-
-      step_ca_intermediate_cert_local_path ({{ step_ca_intermediate_cert_local_path }})
-      contains a certificate that does not chain to step_ca_root_cert_local_path
-      ({{ step_ca_root_cert_local_path }}).
-      Certificate position in bundle: {{ __step_ca_intermediate_verify_result_index + 1 }}.
-      openssl verify stderr: {{ item.stderr | default('') | trim }}
-      openssl verify stdout: {{ item.stdout | default('') | trim }}
-  loop: "{{ __step_ca_intermediate_chain_verify_results.results }}"
-  loop_control:
-    index_var: __step_ca_intermediate_verify_result_index
-
-- name: Read SHA256 fingerprints for intermediate bundle certificates
-  become: false
-  delegate_to: localhost
-  ansible.builtin.command:
-    argv:
-      - openssl
-      - x509
-      - -noout
-      - -fingerprint
-      - -sha256
-    stdin: "{{ item }}"
-  register: __step_ca_intermediate_cert_fingerprint_results
-  failed_when: false
-  changed_when: false
-  loop: "{{ __step_ca_intermediate_cert_pem_blocks }}"
-
-- name: Fail when an intermediate bundle certificate fingerprint cannot be read
-  when: item.rc != 0
-  become: false
-  delegate_to: localhost
-  ansible.builtin.fail:
-    msg: >-
-      Failed to read SHA256 fingerprint for a certificate in
-      step_ca_intermediate_cert_local_path ({{ step_ca_intermediate_cert_local_path }}).
-      Certificate position in bundle: {{ __step_ca_intermediate_fingerprint_result_index + 1 }}.
-      stderr: {{ item.stderr | default('') | trim }}
-  loop: "{{ __step_ca_intermediate_cert_fingerprint_results.results }}"
-  loop_control:
-    index_var: __step_ca_intermediate_fingerprint_result_index
-
-- name: Normalize intermediate bundle certificate SHA256 fingerprints
-  become: false
-  ansible.builtin.set_fact:
-    __step_ca_intermediate_cert_fingerprints_normalized: >-
-      {{
-        __step_ca_intermediate_cert_fingerprint_results.results
-        | map(attribute='stdout')
-        | map('regex_replace', '^.*Fingerprint=', '')
-        | map('regex_replace', ':', '')
-        | map('trim')
-        | map('upper')
-        | list
-      }}
-  changed_when: false
-
-- name: Fail when intermediate certificate bundle contains the root certificate
-  when: __step_ca_root_cert_fingerprint_normalized in __step_ca_intermediate_cert_fingerprints_normalized
-  become: false
-  delegate_to: localhost
-  ansible.builtin.fail:
-    msg: >-
-      step_ca_intermediate_cert_local_path ({{ step_ca_intermediate_cert_local_path }})
-      must not include the root certificate from step_ca_root_cert_local_path
-      ({{ step_ca_root_cert_local_path }}). Remove the root certificate from the
-      intermediate bundle.
-
 - name: Normalize expected DNS names for SAN validation
   become: false
   ansible.builtin.set_fact:
@@ -453,7 +192,7 @@
     __step_ca_intermediate_dns_sans_normalized: >-
       {{
         __step_ca_intermediate_cert_san.stdout
-        | regex_findall('DNS:([^,\\s]+)')
+        | regex_findall('DNS:([^,\s]+)')
         | map('trim')
         | reject('equalto', '')
         | map('lower')

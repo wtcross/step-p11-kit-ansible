@@ -12,3 +12,13 @@ step_host_os_packages:
 
 step_host_update_packages: true
 step_host_reboot_if_required: true
+
+# Manage cosign on target hosts from the Ansible controller
+step_host_cosign_install_path: /usr/local/bin/cosign
+step_host_cosign_host_architecture: x86_64
+step_host_cosign_github_owner: sigstore
+step_host_cosign_github_repo: cosign
+step_host_cosign_release_asset: cosign-linux-amd64
+step_host_cosign_identity: keyless@projectsigstore.iam.gserviceaccount.com
+step_host_cosign_oidc_issuer: https://accounts.google.com
+step_host_cosign_controller_workspace_root: /tmp

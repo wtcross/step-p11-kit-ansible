@@ -60,7 +60,7 @@ ansible-galaxy collection install ansible.posix containers.podman
 
 | Role | Description |
 | --- | --- |
-| [step_host](roles/step_host/README.md) | Prepares the host OS with required packages |
+| [step_host](roles/step_host/README.md) | Prepares host OS packages, manages cosign installation, and configures SELinux |
 | [step_user](roles/step_user/README.md) | Creates dedicated user and configures HSM access |
 | [step_ca](roles/step_ca/README.md) | Deploys `step-ca-p11-kit` via rootless quadlets using upstream unit/script assets |
 

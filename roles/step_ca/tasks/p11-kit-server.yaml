@@ -1,9 +1,0 @@
----
-- name: Ensure p11-kit-server environment directory exists
-  become: true
-  ansible.builtin.file:
-    state: directory
-    path: "{{ __step_user_home }}/.config/p11-kit-server"
-    owner: "{{ _step_user }}"
-    group: "{{ _step_group }}"
-    mode: "0750"

@@ -5,12 +5,6 @@
 - name: Include upstream asset synchronization tasks
   ansible.builtin.include_tasks: fetch-upstream-assets.yaml
 
-- name: Include p11-kit server tasks
-  ansible.builtin.include_tasks: p11-kit-server.yaml
-
-- name: Include SELinux tasks
-  ansible.builtin.include_tasks: selinux.yaml
-
 - name: Include podman secret tasks
   ansible.builtin.include_tasks: podman-secret.yaml
 

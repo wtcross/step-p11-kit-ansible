@@ -1,0 +1,357 @@
+---
+- name: Validate host architecture supports configured cosign release asset
+  when: ansible_architecture != step_host_cosign_host_architecture
+  become: false
+  ansible.builtin.fail:
+    msg: >-
+      Unsupported ansible_architecture ({{ ansible_architecture }}) for configured cosign release asset
+      {{ step_host_cosign_release_asset }}. This role currently supports only
+      {{ step_host_cosign_host_architecture }} for managed cosign updates.
+
+- name: Check trusted cosign availability and version on Ansible controller
+  become: false
+  delegate_to: localhost
+  ansible.builtin.command:
+    argv:
+      - cosign
+      - version
+      - --json
+  register: __step_host_controller_cosign_version_check
+  run_once: true
+  failed_when: false
+  changed_when: false
+
+- name: Fail when trusted cosign is unavailable on Ansible controller PATH
+  when: __step_host_controller_cosign_version_check.rc != 0
+  become: false
+  delegate_to: localhost
+  ansible.builtin.fail:
+    msg: >-
+      A trusted cosign installation is required on the Ansible controller PATH
+      to verify downloaded release binaries.
+      Install or repair controller cosign before running step_host.
+  run_once: true
+
+- name: Define controller anchor host for run_once cosign metadata
+  become: false
+  ansible.builtin.set_fact:
+    __step_host_controller_anchor_host: "{{ ansible_play_hosts_all[0] }}"
+  changed_when: false
+
+- name: Read controller user for cosign artifact ownership
+  become: false
+  delegate_to: localhost
+  ansible.builtin.command:
+    argv:
+      - id
+      - -un
+  register: __step_host_controller_user_cmd
+  run_once: true
+  changed_when: false
+
+- name: Read controller group for cosign artifact ownership
+  become: false
+  delegate_to: localhost
+  ansible.builtin.command:
+    argv:
+      - id
+      - -gn
+  register: __step_host_controller_group_cmd
+  run_once: true
+  changed_when: false
+
+- name: Read latest cosign release metadata from GitHub on controller
+  become: false
+  delegate_to: localhost
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ step_host_cosign_github_owner }}/{{ step_host_cosign_github_repo }}/releases/latest"
+    return_content: true
+    status_code: 200
+  register: __step_host_cosign_latest_release_response
+  run_once: true
+  changed_when: false
+
+- name: Normalize latest cosign release metadata for managed hosts
+  become: false
+  ansible.builtin.set_fact:
+    __step_host_cosign_latest_release_tag: "{{ hostvars[__step_host_controller_anchor_host].__step_host_cosign_latest_release_response.json.tag_name | default('') | trim }}"
+    __step_host_cosign_latest_release_version: "{{ (hostvars[__step_host_controller_anchor_host].__step_host_cosign_latest_release_response.json.tag_name | default('') | trim) | regex_replace('^v', '') }}"
+    __step_host_cosign_latest_release_assets: "{{ hostvars[__step_host_controller_anchor_host].__step_host_cosign_latest_release_response.json.assets | default([]) }}"
+  changed_when: false
+
+- name: Fail when latest cosign release metadata is missing tag_name
+  when: __step_host_cosign_latest_release_tag | length == 0
+  become: false
+  ansible.builtin.fail:
+    msg: >-
+      Could not determine the latest cosign release tag from the GitHub API response.
+
+- name: Select configured cosign binary asset from latest release
+  become: false
+  ansible.builtin.set_fact:
+    __step_host_cosign_binary_asset: >-
+      {{
+        (
+          __step_host_cosign_latest_release_assets
+          | selectattr('name', 'equalto', step_host_cosign_release_asset)
+          | list
+          | first
+        )
+        | default({}, true)
+      }}
+  changed_when: false
+
+- name: Fail when configured cosign binary asset is missing from latest release
+  when: (__step_host_cosign_binary_asset.get('browser_download_url', '') | length) == 0
+  become: false
+  ansible.builtin.fail:
+    msg: >-
+      Could not find cosign release asset {{ step_host_cosign_release_asset }}
+      in release {{ __step_host_cosign_latest_release_tag }}.
+
+- name: Select configured cosign bundle asset from latest release
+  become: false
+  ansible.builtin.set_fact:
+    __step_host_cosign_bundle_asset: >-
+      {{
+        (
+          __step_host_cosign_latest_release_assets
+          | selectattr('name', 'equalto', step_host_cosign_release_asset ~ '.sigstore.json')
+          | list
+          | first
+        )
+        | default({}, true)
+      }}
+  changed_when: false
+
+- name: Fail when configured cosign bundle asset is missing from latest release
+  when: (__step_host_cosign_bundle_asset.get('browser_download_url', '') | length) == 0
+  become: false
+  ansible.builtin.fail:
+    msg: >-
+      Could not find cosign release bundle asset {{ step_host_cosign_release_asset }}.sigstore.json
+      in release {{ __step_host_cosign_latest_release_tag }}.
+
+- name: Define controller cosign artifact paths
+  become: false
+  ansible.builtin.set_fact:
+    __step_host_cosign_controller_workspace_path: "{{ step_host_cosign_controller_workspace_root }}/step-host-cosign-{{ __step_host_cosign_latest_release_version }}"
+    __step_host_cosign_controller_binary_download_path: "{{ step_host_cosign_controller_workspace_root }}/step-host-cosign-{{ __step_host_cosign_latest_release_version }}/{{ step_host_cosign_release_asset }}"
+    __step_host_cosign_controller_bundle_download_path: "{{ step_host_cosign_controller_workspace_root }}/step-host-cosign-{{ __step_host_cosign_latest_release_version }}/{{ step_host_cosign_release_asset }}.sigstore.json"
+  changed_when: false
+
+- name: Check cosign binary state at managed install path
+  become: false
+  ansible.builtin.stat:
+    path: "{{ step_host_cosign_install_path }}"
+  register: __step_host_cosign_managed_path_stat
+  changed_when: false
+
+- name: Check installed cosign version at managed install path
+  when: __step_host_cosign_managed_path_stat.stat.executable | default(false)
+  become: false
+  ansible.builtin.command:
+    argv:
+      - "{{ step_host_cosign_install_path }}"
+      - version
+      - --json
+  register: __step_host_cosign_managed_version_cmd
+  failed_when: false
+  changed_when: false
+
+- name: Parse installed cosign version JSON from managed install path
+  become: false
+  ansible.builtin.set_fact:
+    __step_host_cosign_managed_version_json: "{{ __step_host_cosign_managed_version_cmd.stdout | from_json }}"
+  when:
+    - __step_host_cosign_managed_version_cmd is defined
+    - not (__step_host_cosign_managed_version_cmd.skipped | default(false))
+    - __step_host_cosign_managed_version_cmd.rc == 0
+  changed_when: false
+
+- name: Normalize installed cosign release version at managed install path
+  become: false
+  ansible.builtin.set_fact:
+    __step_host_cosign_host_installed_version: >-
+      {{
+        ((__step_host_cosign_managed_version_json | default({})).get('gitVersion', '') | trim)
+        | regex_replace('^v', '')
+      }}
+  changed_when: false
+
+- name: Determine cosign installation requirement for managed host
+  become: false
+  ansible.builtin.set_fact:
+    __step_host_cosign_install_required: >-
+      {{
+        not (__step_host_cosign_managed_path_stat.stat.executable | default(false))
+        or (
+          __step_host_cosign_managed_version_cmd is defined
+          and not (__step_host_cosign_managed_version_cmd.skipped | default(false))
+          and __step_host_cosign_managed_version_cmd.rc != 0
+        )
+      }}
+  changed_when: false
+
+- name: Determine cosign upgrade requirement for managed host
+  become: false
+  ansible.builtin.set_fact:
+    __step_host_cosign_upgrade_required: >-
+      {{
+        (not (__step_host_cosign_install_required | bool))
+        and (
+          (__step_host_cosign_host_installed_version | length == 0)
+          or (not (__step_host_cosign_host_installed_version | regex_search('^[0-9]+\.[0-9]+\.[0-9]+([.+-].+)?$')))
+          or (__step_host_cosign_host_installed_version is version(__step_host_cosign_latest_release_version, '<'))
+        )
+      }}
+  changed_when: false
+
+- name: Determine whether cosign update is required for managed host
+  become: false
+  ansible.builtin.set_fact:
+    __step_host_cosign_update_required: "{{ __step_host_cosign_install_required | bool or __step_host_cosign_upgrade_required | bool }}"
+  changed_when: false
+
+- name: Determine whether any managed host requires cosign update
+  become: false
+  delegate_to: localhost
+  ansible.builtin.set_fact:
+    __step_host_any_cosign_update_required: >-
+      {{
+        ansible_play_hosts_all
+        | map('extract', hostvars, '__step_host_cosign_update_required')
+        | map('default', false)
+        | select('equalto', true)
+        | list
+        | length > 0
+      }}
+  run_once: true
+  changed_when: false
+
+- name: Ensure controller workspace directory exists for cosign artifacts
+  when: hostvars[__step_host_controller_anchor_host].__step_host_any_cosign_update_required | bool
+  become: false
+  delegate_to: localhost
+  ansible.builtin.file:
+    state: directory
+    path: "{{ __step_host_cosign_controller_workspace_path }}"
+    owner: "{{ hostvars[__step_host_controller_anchor_host].__step_host_controller_user_cmd.stdout | trim }}"
+    group: "{{ hostvars[__step_host_controller_anchor_host].__step_host_controller_group_cmd.stdout | trim }}"
+    mode: "0700"
+  run_once: true
+
+- name: Download configured cosign binary asset to controller
+  when: hostvars[__step_host_controller_anchor_host].__step_host_any_cosign_update_required | bool
+  become: false
+  delegate_to: localhost
+  ansible.builtin.get_url:
+    url: "{{ __step_host_cosign_binary_asset.browser_download_url }}"
+    dest: "{{ __step_host_cosign_controller_binary_download_path }}"
+    owner: "{{ hostvars[__step_host_controller_anchor_host].__step_host_controller_user_cmd.stdout | trim }}"
+    group: "{{ hostvars[__step_host_controller_anchor_host].__step_host_controller_group_cmd.stdout | trim }}"
+    mode: "0644"
+    force: true
+  run_once: true
+
+- name: Download configured cosign bundle asset to controller
+  when: hostvars[__step_host_controller_anchor_host].__step_host_any_cosign_update_required | bool
+  become: false
+  delegate_to: localhost
+  ansible.builtin.get_url:
+    url: "{{ __step_host_cosign_bundle_asset.browser_download_url }}"
+    dest: "{{ __step_host_cosign_controller_bundle_download_path }}"
+    owner: "{{ hostvars[__step_host_controller_anchor_host].__step_host_controller_user_cmd.stdout | trim }}"
+    group: "{{ hostvars[__step_host_controller_anchor_host].__step_host_controller_group_cmd.stdout | trim }}"
+    mode: "0644"
+    force: true
+  run_once: true
+
+- name: Verify downloaded cosign binary on controller with trusted cosign
+  when: hostvars[__step_host_controller_anchor_host].__step_host_any_cosign_update_required | bool
+  become: false
+  delegate_to: localhost
+  ansible.builtin.command:
+    argv:
+      - cosign
+      - verify-blob
+      - --bundle
+      - "{{ __step_host_cosign_controller_bundle_download_path }}"
+      - --certificate-identity
+      - "{{ step_host_cosign_identity }}"
+      - --certificate-oidc-issuer
+      - "{{ step_host_cosign_oidc_issuer }}"
+      - "{{ __step_host_cosign_controller_binary_download_path }}"
+  register: __step_host_cosign_controller_verification
+  run_once: true
+  failed_when: __step_host_cosign_controller_verification.rc != 0
+  changed_when: false
+
+- name: Ensure managed host cosign install directory exists
+  when: __step_host_cosign_update_required | bool
+  become: true
+  ansible.builtin.file:
+    state: directory
+    path: "{{ step_host_cosign_install_path | dirname }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install verified cosign binary on managed host
+  when: __step_host_cosign_update_required | bool
+  become: true
+  ansible.builtin.copy:
+    src: "{{ __step_host_cosign_controller_binary_download_path }}"
+    dest: "{{ step_host_cosign_install_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Read installed cosign version after managed host update
+  when: __step_host_cosign_update_required | bool
+  become: false
+  ansible.builtin.command:
+    argv:
+      - "{{ step_host_cosign_install_path }}"
+      - version
+      - --json
+  register: __step_host_cosign_post_update_version_cmd
+  changed_when: false
+
+- name: Parse installed cosign version after managed host update
+  when: __step_host_cosign_update_required | bool
+  become: false
+  ansible.builtin.set_fact:
+    __step_host_cosign_post_update_version_json: "{{ __step_host_cosign_post_update_version_cmd.stdout | from_json }}"
+  changed_when: false
+
+- name: Normalize installed cosign version after managed host update
+  when: __step_host_cosign_update_required | bool
+  become: false
+  ansible.builtin.set_fact:
+    __step_host_cosign_post_update_version: >-
+      {{
+        ((__step_host_cosign_post_update_version_json | default({})).get('gitVersion', '') | trim)
+        | regex_replace('^v', '')
+      }}
+  changed_when: false
+
+- name: Fail when managed host cosign version does not match latest release after update
+  when:
+    - __step_host_cosign_update_required | bool
+    - __step_host_cosign_post_update_version != __step_host_cosign_latest_release_version
+  become: false
+  ansible.builtin.fail:
+    msg: >-
+      Managed host cosign version ({{ __step_host_cosign_post_update_version | default('unknown') }})
+      does not match expected latest release version {{ __step_host_cosign_latest_release_version }}
+      after installation.
+
+- name: Remove controller workspace directory for cosign artifacts
+  when: hostvars[__step_host_controller_anchor_host].__step_host_any_cosign_update_required | bool
+  become: false
+  delegate_to: localhost
+  ansible.builtin.file:
+    state: absent
+    path: "{{ __step_host_cosign_controller_workspace_path }}"
+  run_once: true

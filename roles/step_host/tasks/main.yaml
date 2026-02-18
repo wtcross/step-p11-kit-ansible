@@ -16,6 +16,12 @@
     update_cache: false
     use_backend: dnf4
 
+- name: Include cosign tasks
+  ansible.builtin.include_tasks: cosign.yaml
+
+- name: Include SELinux tasks
+  ansible.builtin.include_tasks: selinux.yaml
+
 - name: Check if reboot is required
   when: step_host_reboot_if_required | bool
   become: true

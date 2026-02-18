@@ -2,7 +2,7 @@
 galaxy_info:
   role_name: step_host
   author: wtcross
-  description: Prepares the host OS with required packages for step-ca deployment
+  description: Prepares host OS packages, manages cosign installation, and configures SELinux for step-ca deployment
   license: MIT-0
   min_ansible_version: "2.16"
   platforms:
@@ -17,5 +17,6 @@ galaxy_info:
     - ca
     - hsm
     - pkcs11
+    - selinux
 
 dependencies: []
