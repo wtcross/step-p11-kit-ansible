@@ -74,7 +74,7 @@
     mode: "0700"
   loop: "{{ __step_ca_upstream_assets | map(attribute='local_path') | map('dirname') | unique | list }}"
 
-- name: Download upstream assets from step-ca-p11-kit-images
+- name: Download upstream assets from step-p11-kit-images
   become: false
   delegate_to: localhost
   ansible.builtin.get_url:

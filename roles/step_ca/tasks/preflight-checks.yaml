@@ -11,7 +11,7 @@
     - step_ca_dns_names
     - step_ca_host_private_key_pkcs11_uri
     - step_ca_root_cert_local_path
-    - step_ca_intermediate_cert_local_path
+    - step_ca_cert_local_path
 
 - name: Check if cosign is installed on target host
   become: false
@@ -105,8 +105,6 @@
       pkcs11:token={{ __step_ca_host_pkcs11_token }}?module-path={{ __step_ca_host_pkcs11_module_path }}
     __step_ca_private_key_pkcs11_uri_derived: >-
       pkcs11:token={{ __step_ca_host_pkcs11_token }};id={{ __step_ca_host_pkcs11_id }}{% if __step_ca_host_pkcs11_object | length > 0 %};object={{ __step_ca_host_pkcs11_object }}{% endif %}{% if __step_ca_host_pkcs11_type | length > 0 %};type={{ __step_ca_host_pkcs11_type }}{% endif %}?module-path={{ __step_ca_container_pkcs11_module_path }}&pin-source=file:///run/secrets/hsm-pin
-    __step_ca_kms_pkcs11_uri_derived: >-
-      pkcs11:token={{ __step_ca_host_pkcs11_token }}?module-path={{ __step_ca_container_pkcs11_module_path }}&pin-source=file:///run/secrets/hsm-pin
   changed_when: false
 
 - name: Validate derived instance name
@@ -134,8 +132,8 @@
   loop:
     - name: root cert
       path: "{{ step_ca_root_cert_local_path }}"
-    - name: intermediate cert
-      path: "{{ step_ca_intermediate_cert_local_path }}"
+    - name: step-ca cert
+      path: "{{ step_ca_cert_local_path }}"
 
 - name: Fail when a required certificate source file does not exist
   when: not item.stat.exists
@@ -160,7 +158,7 @@
       }}
   changed_when: false
 
-- name: Read intermediate certificate SAN extension
+- name: Read step-ca certificate SAN extension
   become: false
   delegate_to: localhost
   ansible.builtin.command:
@@ -168,30 +166,30 @@
       - openssl
       - x509
       - -in
-      - "{{ step_ca_intermediate_cert_local_path }}"
+      - "{{ step_ca_cert_local_path }}"
       - -noout
       - -ext
       - subjectAltName
-  register: __step_ca_intermediate_cert_san
+  register: __step_ca_cert_san
   failed_when: false
   changed_when: false
 
-- name: Fail when intermediate certificate SAN extension cannot be read
-  when: __step_ca_intermediate_cert_san.rc != 0
+- name: Fail when step-ca certificate SAN extension cannot be read
+  when: __step_ca_cert_san.rc != 0
   become: false
   delegate_to: localhost
   ansible.builtin.fail:
     msg: >-
-      Failed to read subjectAltName extension from intermediate certificate
-      {{ step_ca_intermediate_cert_local_path }}.
-      stderr: {{ __step_ca_intermediate_cert_san.stderr | default('') | trim }}
+      Failed to read subjectAltName extension from step-ca certificate
+      {{ step_ca_cert_local_path }}.
+      stderr: {{ __step_ca_cert_san.stderr | default('') | trim }}
 
-- name: Parse DNS SAN entries from intermediate certificate
+- name: Parse DNS SAN entries from step-ca certificate
   become: false
   ansible.builtin.set_fact:
-    __step_ca_intermediate_dns_sans_normalized: >-
+    __step_ca_cert_dns_sans_normalized: >-
       {{
-        __step_ca_intermediate_cert_san.stdout
+        __step_ca_cert_san.stdout
         | regex_findall('DNS:([^,\s]+)')
         | map('trim')
         | reject('equalto', '')
@@ -201,24 +199,24 @@
       }}
   changed_when: false
 
-- name: Determine DNS names missing from intermediate certificate SAN
+- name: Determine DNS names missing from step-ca certificate SAN
   become: false
   ansible.builtin.set_fact:
-    __step_ca_missing_dns_names_in_intermediate_san: >-
+    __step_ca_missing_dns_names_in_cert_san: >-
       {{
         __step_ca_expected_dns_names_normalized
-        | difference(__step_ca_intermediate_dns_sans_normalized)
+        | difference(__step_ca_cert_dns_sans_normalized)
       }}
   changed_when: false
 
-- name: Fail when intermediate certificate SAN does not cover configured DNS names
-  when: __step_ca_missing_dns_names_in_intermediate_san | length > 0
+- name: Fail when step-ca certificate SAN does not cover configured DNS names
+  when: __step_ca_missing_dns_names_in_cert_san | length > 0
   become: false
   delegate_to: localhost
   ansible.builtin.fail:
     msg: >-
-      step_ca_intermediate_cert_local_path ({{ step_ca_intermediate_cert_local_path }})
+      step_ca_cert_local_path ({{ step_ca_cert_local_path }})
       is missing required DNS SAN entries for step_ca_dns_names.
-      Missing: {{ __step_ca_missing_dns_names_in_intermediate_san | join(', ') }}.
+      Missing: {{ __step_ca_missing_dns_names_in_cert_san | join(', ') }}.
       Expected: {{ __step_ca_expected_dns_names_normalized | join(', ') }}.
-      Certificate DNS SANs: {{ __step_ca_intermediate_dns_sans_normalized | join(', ') }}.
+      Certificate DNS SANs: {{ __step_ca_cert_dns_sans_normalized | join(', ') }}.

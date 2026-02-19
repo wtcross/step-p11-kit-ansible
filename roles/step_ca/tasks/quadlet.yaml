@@ -17,108 +17,7 @@
     group: "{{ _step_group }}"
     mode: "0750"
 
-- name: Read existing step-ca data volume mountpoint
-  become: true
-  become_user: "{{ _step_user }}"
-  environment:
-    HOME: "{{ __step_user_home }}"
-  ansible.builtin.command:
-    argv:
-      - podman
-      - volume
-      - inspect
-      - --format
-      - "{{ '{{ .Mountpoint }}' }}"
-      - "step-ca-p11-kit-{{ _step_instance }}-data"
-  register: __step_ca_data_volume_mountpoint_cmd
-  failed_when: false
-  changed_when: false
-
-- name: Normalize existing step-ca data volume mountpoint
-  become: false
-  ansible.builtin.set_fact:
-    __step_ca_data_volume_mountpoint: >-
-      {{
-        (__step_ca_data_volume_mountpoint_cmd.stdout | default('') | trim)
-        if __step_ca_data_volume_mountpoint_cmd.rc == 0
-        else ''
-      }}
-  changed_when: false
-
-- name: Check for persisted step-ca config in existing data volume
-  when: __step_ca_data_volume_mountpoint | length > 0
-  become: true
-  ansible.builtin.stat:
-    path: "{{ __step_ca_data_volume_mountpoint }}/config/ca.json"
-  register: __step_ca_existing_ca_config_stat
-  changed_when: false
-
-- name: Read persisted step-ca config from existing data volume
-  when: __step_ca_existing_ca_config_stat.stat.exists | default(false)
-  become: true
-  ansible.builtin.slurp:
-    src: "{{ __step_ca_data_volume_mountpoint }}/config/ca.json"
-  register: __step_ca_existing_ca_config
-  changed_when: false
-
-- name: Extract persisted step-ca listener address
-  when: __step_ca_existing_ca_config is defined
-  become: false
-  ansible.builtin.set_fact:
-    __step_ca_existing_ca_address: >-
-      {{
-        (
-          __step_ca_existing_ca_config.content
-          | b64decode
-          | regex_findall('"address"\\s*:\\s*"([^"]+)"')
-          | first
-        )
-        | default('')
-        | trim
-      }}
-  changed_when: false
-
-- name: Extract persisted step-ca listener port
-  when: __step_ca_existing_ca_address | default('') | length > 0
-  become: false
-  ansible.builtin.set_fact:
-    __step_ca_existing_ca_listener_port: >-
-      {{
-        (
-          __step_ca_existing_ca_address
-          | regex_findall('([0-9]+)$')
-          | first
-        )
-        | default('')
-        | trim
-      }}
-  changed_when: false
-
-- name: Determine effective step-ca container HTTPS port
-  become: false
-  ansible.builtin.set_fact:
-    __step_ca_effective_container_https_port: >-
-      {{
-        (__step_ca_existing_ca_listener_port | default('') | trim)
-        if (__step_ca_existing_ca_listener_port | default('') | trim | length > 0)
-        else __step_ca_container_https_port
-      }}
-  changed_when: false
-
-- name: Warn when existing step-ca instance uses non-default internal HTTPS port
-  when:
-    - __step_ca_existing_ca_listener_port | default('') | trim | length > 0
-    - __step_ca_existing_ca_listener_port != __step_ca_container_https_port
-  become: false
-  ansible.builtin.debug:
-    msg: >-
-      Existing step-ca instance {{ _step_instance }} uses internal listener port
-      {{ __step_ca_existing_ca_listener_port }} from persisted ca.json.
-      This role preserves existing listener ports; new instances default to
-      {{ __step_ca_container_https_port }}.
-  changed_when: false
-
-- name: Gather current env file checksums
+- name: Gather current instance config file checksums
   become: true
   ansible.builtin.stat:
     path: "{{ item }}"
@@ -126,6 +25,7 @@
   loop:
     - "{{ __step_user_home }}/.config/p11-kit-server/{{ _step_instance }}.env"
     - "{{ __step_user_home }}/.config/step-ca/{{ _step_instance }}.env"
+    - "{{ __step_user_home }}/.config/containers/systemd/step-ca-p11-kit@{{ _step_instance }}.container.d/10-publish-port.conf"
 
 - name: Generate instance env files using upstream helper script
   become: true
@@ -141,8 +41,8 @@
       - "{{ step_ca_name }}"
       - --dns
       - "{{ _step_ca_dns_names_csv | trim }}"
-      - --address
-      - ":{{ __step_ca_effective_container_https_port }}"
+      - --external-port
+      - "{{ _step_https_port }}"
       - --admin-subject
       - "{{ _step_ca_admin_subject }}"
       - --provisioner
@@ -155,12 +55,86 @@
       - "{{ __step_ca_hsm_pkcs11_uri_derived }}"
       - --private-key-pkcs11-uri
       - "{{ __step_ca_private_key_pkcs11_uri_derived }}"
-      - --kms-pkcs11-uri
-      - "{{ __step_ca_kms_pkcs11_uri_derived }}"
       - --force
   changed_when: false
 
-- name: Gather env file checksums after regeneration
+- name: Gather generated instance quadlet artifact stats
+  become: true
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+    follow: false
+  register: __step_ca_generated_quadlet_artifacts
+  changed_when: false
+  loop:
+    - name: instanced quadlet source
+      path: "{{ __step_user_home }}/.config/containers/systemd/step-ca-p11-kit@{{ _step_instance }}.container"
+    - name: instance port drop-in directory
+      path: "{{ __step_user_home }}/.config/containers/systemd/step-ca-p11-kit@{{ _step_instance }}.container.d"
+    - name: instance port drop-in file
+      path: "{{ __step_user_home }}/.config/containers/systemd/step-ca-p11-kit@{{ _step_instance }}.container.d/10-publish-port.conf"
+
+- name: Fail when a generated instance quadlet artifact is missing
+  when: not item.stat.exists
+  become: false
+  ansible.builtin.fail:
+    msg: >-
+      Expected generated instance quadlet artifact is missing:
+      {{ item.item.path }}
+  loop: "{{ __step_ca_generated_quadlet_artifacts.results }}"
+
+- name: Fail when generated instanced quadlet source is not a symlink to template
+  when: >-
+    not (__step_ca_generated_quadlet_artifacts.results[0].stat.islnk | default(false))
+    or
+    (
+      (__step_ca_generated_quadlet_artifacts.results[0].stat.lnk_target | default('')) != 'step-ca-p11-kit@.container'
+      and
+      (
+        (__step_ca_generated_quadlet_artifacts.results[0].stat.lnk_source | default(''))
+        | regex_search('/step-ca-p11-kit@\\.container$')
+      ) is none
+    )
+  become: false
+  ansible.builtin.fail:
+    msg: >-
+      Generated instanced quadlet source is not linked to step-ca-p11-kit@.container.
+      path: {{ __step_ca_generated_quadlet_artifacts.results[0].item.path }}
+      lnk_target: {{ __step_ca_generated_quadlet_artifacts.results[0].stat.lnk_target | default('') }}
+      lnk_source: {{ __step_ca_generated_quadlet_artifacts.results[0].stat.lnk_source | default('') }}
+
+- name: Fail when generated instance port drop-in directory has unexpected ownership or mode
+  when: >-
+    not (__step_ca_generated_quadlet_artifacts.results[1].stat.isdir | default(false))
+    or (__step_ca_generated_quadlet_artifacts.results[1].stat.mode | default('')) != '0755'
+    or (__step_ca_generated_quadlet_artifacts.results[1].stat.pw_name | default('')) != _step_user
+    or (__step_ca_generated_quadlet_artifacts.results[1].stat.gr_name | default('')) != _step_group
+  become: false
+  ansible.builtin.fail:
+    msg: >-
+      Generated instance port drop-in directory metadata is unexpected.
+      path: {{ __step_ca_generated_quadlet_artifacts.results[1].item.path }}
+      mode: {{ __step_ca_generated_quadlet_artifacts.results[1].stat.mode | default('') }}
+      owner: {{ __step_ca_generated_quadlet_artifacts.results[1].stat.pw_name | default('') }}
+      group: {{ __step_ca_generated_quadlet_artifacts.results[1].stat.gr_name | default('') }}
+      expected mode: 0755 owner: {{ _step_user }} group: {{ _step_group }}
+
+- name: Fail when generated instance port drop-in file has unexpected ownership or mode
+  when: >-
+    not (__step_ca_generated_quadlet_artifacts.results[2].stat.isreg | default(false))
+    or (__step_ca_generated_quadlet_artifacts.results[2].stat.mode | default('')) != '0644'
+    or (__step_ca_generated_quadlet_artifacts.results[2].stat.pw_name | default('')) != _step_user
+    or (__step_ca_generated_quadlet_artifacts.results[2].stat.gr_name | default('')) != _step_group
+  become: false
+  ansible.builtin.fail:
+    msg: >-
+      Generated instance port drop-in file metadata is unexpected.
+      path: {{ __step_ca_generated_quadlet_artifacts.results[2].item.path }}
+      mode: {{ __step_ca_generated_quadlet_artifacts.results[2].stat.mode | default('') }}
+      owner: {{ __step_ca_generated_quadlet_artifacts.results[2].stat.pw_name | default('') }}
+      group: {{ __step_ca_generated_quadlet_artifacts.results[2].stat.gr_name | default('') }}
+      expected mode: 0644 owner: {{ _step_user }} group: {{ _step_group }}
+
+- name: Gather instance config file checksums after regeneration
   become: true
   ansible.builtin.stat:
     path: "{{ item }}"
@@ -168,8 +142,9 @@
   loop:
     - "{{ __step_user_home }}/.config/p11-kit-server/{{ _step_instance }}.env"
     - "{{ __step_user_home }}/.config/step-ca/{{ _step_instance }}.env"
+    - "{{ __step_user_home }}/.config/containers/systemd/step-ca-p11-kit@{{ _step_instance }}.container.d/10-publish-port.conf"
 
-- name: Trigger restarts when regenerated env files changed
+- name: Trigger restarts when regenerated instance config files changed
   become: false
   ansible.builtin.set_fact:
     __step_ca_env_files_changed: >-
@@ -177,57 +152,13 @@
         (step_ca_env_before.results[0].stat.checksum | default('')) !=
         (step_ca_env_after.results[0].stat.checksum | default('')) or
         (step_ca_env_before.results[1].stat.checksum | default('')) !=
-        (step_ca_env_after.results[1].stat.checksum | default(''))
+        (step_ca_env_after.results[1].stat.checksum | default('')) or
+        (step_ca_env_before.results[2].stat.checksum | default('')) !=
+        (step_ca_env_after.results[2].stat.checksum | default(''))
       }}
   changed_when: __step_ca_env_files_changed | bool
   notify:
     - Restart the p11-kit-server target
-    - Restart step-ca quadlet service
-
-- name: Ensure step-ca instanced quadlet source symlink exists
-  become: true
-  ansible.builtin.file:
-    state: link
-    path: "{{ __step_user_home }}/.config/containers/systemd/step-ca-p11-kit@{{ _step_instance }}.container"
-    src: step-ca-p11-kit@.container
-    force: true
-    follow: false
-    owner: "{{ _step_user }}"
-    group: "{{ _step_group }}"
-  notify:
-    - Reload the user-level systemd daemon
-    - Restart step-ca quadlet service
-
-- name: Ensure step-ca container drop-in directory exists
-  become: true
-  ansible.builtin.file:
-    state: directory
-    path: "{{ __step_user_home }}/.config/containers/systemd/step-ca-p11-kit@{{ _step_instance }}.container.d"
-    owner: "{{ _step_user }}"
-    group: "{{ _step_group }}"
-    mode: "0755"
-
-- name: Ensure step-ca port configuration drop-in exists
-  become: true
-  ansible.builtin.copy:
-    dest: "{{ __step_user_home }}/.config/containers/systemd/step-ca-p11-kit@{{ _step_instance }}.container.d/10-ports.conf"
-    owner: "{{ _step_user }}"
-    group: "{{ _step_group }}"
-    mode: "0644"
-    content: |
-      [Container]
-      PublishPort={{ _step_https_port }}:{{ __step_ca_effective_container_https_port }}
-  notify:
-    - Reload the user-level systemd daemon
-    - Restart step-ca quadlet service
-
-- name: Ensure template-level step-ca port drop-in is absent
-  become: true
-  ansible.builtin.file:
-    state: absent
-    path: "{{ __step_user_home }}/.config/containers/systemd/step-ca-p11-kit@.container.d/10-ports.conf"
-  notify:
-    - Reload the user-level systemd daemon
     - Restart step-ca quadlet service
 
 - name: Reload user-level systemd daemon before starting instance targets
@@ -242,34 +173,6 @@
       - --user
       - daemon-reload
   changed_when: false
-
-- name: Generate quadlet units in dry-run mode for instance drop-in validation
-  become: true
-  become_user: "{{ _step_user }}"
-  environment:
-    XDG_RUNTIME_DIR: /run/user/{{ _step_uid }}
-    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ _step_uid }}/bus"
-  ansible.builtin.command:
-    argv:
-      - /usr/lib/systemd/system-generators/podman-system-generator
-      - --user
-      - --dryrun
-  register: step_ca_quadlet_generator_dryrun
-  changed_when: false
-
-- name: Fail when quadlet dry-run does not include expected instance publish mapping
-  when: >-
-    ('---step-ca-p11-kit@' ~ _step_instance ~ '.service---')
-    not in (step_ca_quadlet_generator_dryrun.stdout ~ '\n' ~ step_ca_quadlet_generator_dryrun.stderr)
-    or
-    ('--publish ' ~ _step_https_port ~ ':' ~ __step_ca_effective_container_https_port)
-    not in (step_ca_quadlet_generator_dryrun.stdout ~ '\n' ~ step_ca_quadlet_generator_dryrun.stderr)
-  become: false
-  ansible.builtin.fail:
-    msg: >-
-      Quadlet dry-run did not generate the expected instance service publish mapping for
-      step-ca-p11-kit@{{ _step_instance }}. Expected to find --publish {{ _step_https_port }}:{{ __step_ca_effective_container_https_port }}
-      in generator output.
 
 - name: Ensure instanced p11-kit-server target is enabled and started
   become: true
@@ -306,7 +209,7 @@
       - podman
       - port
       - "step-ca-{{ _step_instance }}"
-      - "{{ __step_ca_effective_container_https_port }}/tcp"
+      - "9000/tcp"
   register: step_ca_published_ports
   changed_when: false
   failed_when: >-
