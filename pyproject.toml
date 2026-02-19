@@ -1,0 +1,13 @@
+[project]
+name = "step-p11-kit-ansible"
+version = "0.1.0"
+description = "Ansible collection for deploying step-ca-p11-kit with PKCS#11/HSM support"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "ansible>=13.3.0",
+    "molecule>=25.12.0",
+]

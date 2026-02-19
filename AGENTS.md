@@ -81,3 +81,12 @@ Exception:
 - When using command-like modules, set `changed_when` and/or `failed_when` when default behavior is ambiguous.
 - Use `no_log: true` for tasks that handle secrets or sensitive values.
 - Keep changes scoped and update docs when role inputs or behavior change.
+
+## Python Dependency Management
+
+This project uses uv for dependency management.
+
+- To sync dependencies run `uv sync`
+- The venv managed by uv is at `<project root>/.venv` and can be activated with `source .venv/bin/activate`
+- Never update versions in uv.lock directly
+- Always ask for approval before installing any packages or changing anything about uv configuration
